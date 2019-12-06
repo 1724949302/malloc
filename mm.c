@@ -13,7 +13,7 @@
 #include "mm.h"
 #include "memlib.h"
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
 # define dbg_printf(...) printf(__VA_ARGS__)
 #else
@@ -92,14 +92,16 @@ int mm_init(void)
     /* Create the initial empty heap */
     if ((heap_listp = mem_sbrk(CHUNKSIZE)) == (void *)-1) 
         return -1;
-    free_head = 1 * WSIZE;
+    free_head = 3 * WSIZE;
     PUT(heap_listp, 0);
     PUT(heap_listp + (1 * WSIZE), 0);
-    PUT(heap_listp + (2 * WSIZE), 0);
+    PUT(heap_listp + (2 * WSIZE), PACK(0, 1));
     PUT(heap_listp + (3 * WSIZE), PACK(CHUNKSIZE - 4 * WSIZE, 0)); /* Prologue header */ 
     PUT(heap_listp + (4 * WSIZE), 0);  /*Prologue son*/
     PUT(heap_listp + (5 * WSIZE), 0);   /*Prologue father, no use*/
-    PUT(heap_listp + (CHUNKSIZE - 2 * WSIZE), PACK(CHUNKSIZE - 4 * WSIZE, 0)); /* Prologue footer */           
+    PUT(heap_listp + (CHUNKSIZE - 2 * WSIZE), PACK(CHUNKSIZE - 4 * WSIZE, 0)); /* Prologue footer */   
+    PUT(heap_listp + (CHUNKSIZE - 1 * WSIZE), PACK(0, 1));
+    heap_listp +=  WSIZE;
 #ifdef NEXT_FIT
     rover = heap_listp;
 #endif
@@ -118,9 +120,14 @@ void *malloc(size_t size)
     size_t asize;      /* Adjusted block size */
     size_t extendsize; /* Amount to extend heap if no fit */
     char *bp;      
-
+    #ifdef DEBUG
+        printf("melloc recieved a size of %ld\n", size);
+    #endif
     if (heap_listp == 0){
-        mm_init();
+        if(mm_init() == -1){
+            printf("init false\n");
+            exit(0);
+        }
     }
     /* Ignore spurious requests */
     if (size == 0)
@@ -134,14 +141,25 @@ void *malloc(size_t size)
 
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {  
-        place(bp, asize);                  
+        #ifdef DEBUG
+        printf("find_fit success with bp = %ld\n", bp - heap_listp);
+        #endif
+        place(bp, asize);  
+        #ifdef DEBUG
+        printf("place success\n");
+        #endif
         return bp;
     }
-
+    #ifdef DEBUG
+    printf("need expend heap\n");
+    #endif
     /* No fit found. Get more memory and place the block */
     extendsize = MAX(asize,CHUNKSIZE);                 
     if ((bp = extend_heap(extendsize/WSIZE)) == NULL)  
         return NULL;                                  
+    #ifdef DEBUG
+    printf("extend_heap get bp = %ld, new block size = %u\n", bp - heap_listp, GET_SIZE(HDRP(bp)));
+    #endif
     place(bp, asize);                                 
     return bp;
 } 
@@ -155,17 +173,17 @@ void *calloc (size_t nmemb, size_t size) {
  * Return whether the pointer is in the heap.
  * May be useful for debugging.
  */
-static int in_heap(const void *p) {
-    return p <= mem_heap_hi() && p >= mem_heap_lo();
-}
+//static int in_heap(const void *p) {
+    //return p <= mem_heap_hi() && p >= mem_heap_lo();
+//}
 
 /*
  * Return whether the pointer is aligned.
  * May be useful for debugging.
  */
-static int aligned(const void *p) {
-    return (size_t)ALIGN(p) == (size_t)p;
-}
+//static int aligned(const void *p) {
+    //return (size_t)ALIGN(p) == (size_t)p;
+//}
 
 /* 
  * free - Free a block 
@@ -176,23 +194,29 @@ void free(void *bp)
         return;
     
     size_t size = GET_SIZE(HDRP(bp));
+    #ifdef DEBUG
+    printf("free with bp = %ld, size is %lu\n", (char*)(bp) - heap_listp, size);
+    #endif
     if (heap_listp == 0){
         mm_init();
     }
 
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
-    if(free_head == 0){
-        free_head = (char*)(bp) - heap_listp;
-        *(int*)((char*)(bp) + WSIZE) = 0;
-        return;
+    if(free_head != 0){
+        char *next = heap_listp + free_head;
+        *(int*)(next + WSIZE) = (char*)(bp) - next;
+        *(int*)(bp) = next - (char*)(bp);
     }
-    char *next = heap_listp + free_head;
-    *(int*)(next + WSIZE) = (char*)(bp) - next;
-    *(int*)(bp) = next - (char*)(bp);
+    else{
+        *(int*)(bp) = 0;
+    }
+    free_head = ((char*)(bp) - heap_listp);
     *(int*)((char*)(bp) + WSIZE) = 0;
-    free_head = (char*)(bp) - heap_listp;
     coalesce(bp);
+    #ifdef DEBUG
+    printf("free the block = %ld, and size = %ld   ended\n", (char*)(bp) - heap_listp, size);
+    #endif
 }
 
 /*
@@ -262,12 +286,19 @@ static void *extend_heap(size_t words)
     /* Initialize free block header/footer and the epilogue header */
     PUT(HDRP(bp), PACK(size, 0));         /* Free block header */   
     PUT(FTRP(bp), PACK(size, 0));         /* Free block footer */   
-    //PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */ 
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */ 
     //char *next = heap_listp + free_head;
-    *(int*)(heap_listp + free_head + WSIZE) = bp - (heap_listp + free_head);
-    *(int*)(bp) = (heap_listp + free_head) - bp;
-    *(int*)(bp + WSIZE) = 0;
+
+    if(free_head != 0){
+        char *next = heap_listp + free_head;
+        *(int*)(next + WSIZE) = bp - next;
+        *(int*)(bp) = next - bp;
+    }
+    else{
+        *(int*)(bp) = 0;
+    }
     free_head = (bp - heap_listp);
+    *(int*)(bp + WSIZE) = 0;
 
 
     /* Coalesce if the previous block was free */
@@ -279,10 +310,22 @@ static void *extend_heap(size_t words)
  */
 static void *coalesce(void *bp) 
 {
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    #ifdef DEBUG
+    printf("start  coalesce with bp = %ld\n", (char*)(bp) - heap_listp);
+    printf("left size is %u\n", GET_SIZE(((char *)(bp) - DSIZE)));
+    #endif
+    char* prev_bp = PREV_BLKP(bp);
+    size_t prev_alloc;
+    if(prev_bp == bp)
+        prev_alloc = 1;
+    else
+        prev_alloc = GET_ALLOC(FTRP(prev_bp));
+    
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
-
+    #ifdef DEBUG
+    printf("prev_alloc is %lu, next_alloc is %lu\n",prev_alloc, next_alloc);
+    #endif
     if (prev_alloc && next_alloc) {            /* Case 1 */
         return bp;
     }
@@ -294,51 +337,62 @@ static void *coalesce(void *bp)
         PUT(FTRP(bp), PACK(size,0));
         char *next = SNRP(rp);
         char *prev = FARP(rp);
-        if((char*)(bp) == next){
-            *(int*)(prev) = 0;}
-        else{
-            *(int*)(prev) = next - prev;}
+        *(int*)(prev) = next - prev;
         *(int*)(next + WSIZE) = prev - next;
+        if((char*)(rp) == prev){
+            free_head = next - heap_listp;
+            *(int*)(next + WSIZE) = 0;
+        }
+        if((char*)(rp) == next){
+            *(int*)(prev) = 0;}
     }
 
     else if (!prev_alloc && next_alloc) {      /* Case 3 */
         char* lp = PREV_BLKP(bp);
-        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
+        size += GET_SIZE(HDRP(lp));
         PUT(FTRP(bp), PACK(size, 0));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
-        char *next = SNRP(lp);
-        char *prev = FARP(lp);
+        PUT(HDRP(lp), PACK(size, 0));
+        char *next = SNRP(bp);
+        char *prev = FARP(bp);
+        *(int*)(prev) = next - prev;
+        *(int*)(next + WSIZE) = prev - next;
+        if((char*)(bp) == prev){
+            free_head = next - heap_listp;
+            *(int*)(next + WSIZE) = 0;
+        }
         if((char*)(bp) == next){
             *(int*)(prev) = 0;}
-        else{
-            *(int*)(prev) = next - prev;}
-        *(int*)(next + WSIZE) = prev - next;
+        bp = lp;
     }
 
     else {                                     /* Case 4 */
         char* rp = NEXT_BLKP(bp);
         char* lp = PREV_BLKP(bp);
-        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + 
-            GET_SIZE(FTRP(NEXT_BLKP(bp)));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
+        size += GET_SIZE(HDRP(lp)) + GET_SIZE(FTRP(rp));
+        PUT(HDRP(lp), PACK(size, 0));
+        PUT(FTRP(rp), PACK(size, 0));
         char *next = SNRP(rp);
         char *prev = FARP(rp);
-        if((char*)(bp) == next){
-            *(int*)(prev) = 0;}
-        else{
-            *(int*)(prev) = next - prev;}
+        *(int*)(prev) = next - prev;
         *(int*)(next + WSIZE) = prev - next;
+        if((char*)(rp) == prev){
+            free_head = next - heap_listp;
+            *(int*)(next + WSIZE) = 0;
+        }
+        if((char*)(rp) == next){
+            *(int*)(prev) = 0;}
 
-        next = SNRP(lp);
-        prev = FARP(lp);
+        next = SNRP(bp);
+        prev = FARP(bp);
+        *(int*)(prev) = next - prev;
+        *(int*)(next + WSIZE) = prev - next;
+        if((char*)(bp) == prev){
+            free_head = next - heap_listp;
+            *(int*)(next + WSIZE) = 0;
+        }
         if((char*)(bp) == next){
             *(int*)(prev) = 0;}
-        else{
-            *(int*)(prev) = next - prev;}
-        *(int*)(next + WSIZE) = prev - next;
+        bp = lp;
     }
 #ifdef NEXT_FIT
     /* Make sure the rover isn't pointing into the free block */
@@ -361,13 +415,25 @@ static void place(void *bp, size_t asize)
     if ((csize - asize) >= (2*DSIZE)) { 
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
-        bp = NEXT_BLKP(bp);
-        PUT(HDRP(bp), PACK(csize-asize, 0));
-        PUT(FTRP(bp), PACK(csize-asize, 0));
-        *(int*)(prev) = (char*)(bp) - prev;
-        *(int*)(bp) = next - (char*)(bp);
-        *(int*)((char*)(bp) + WSIZE) = prev - (char*)(bp);
-        *(int*)(next + WSIZE) = (char*)(bp) - next;
+        char *rp = NEXT_BLKP(bp);
+        PUT(HDRP(rp), PACK(csize-asize, 0));
+        PUT(FTRP(rp), PACK(csize-asize, 0));
+        if((char*)(bp) == prev){
+            free_head = rp - heap_listp;
+            *(int*)((char*)(rp) + WSIZE) = 0;
+        }
+        else{
+            *(int*)(prev) = (char*)(rp) - prev;
+            *(int*)((char*)(rp) + WSIZE) = prev - (char*)(rp);
+        }
+        if((char*)(bp) == next){
+            *(int*)(rp) = 0;
+        }
+        else{
+            *(int*)(rp) = next - (char*)(rp);
+            *(int*)(next + WSIZE) = (char*)(rp) - next;
+        }
+        
     }
     else { 
         PUT(HDRP(bp), PACK(csize, 1));
@@ -415,7 +481,7 @@ static void *find_fit(size_t asize)
         return NULL;
     void *bp;
 
-    for (bp = heap_listp + free_head; GET_SIZE(HDRP(bp)) > 0; bp = SNRP(bp)) {
+    for (bp = heap_listp + free_head; ; bp = SNRP(bp)) {
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
             return bp;
         }
