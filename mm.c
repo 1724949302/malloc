@@ -42,7 +42,7 @@
  /* Basic constants and macros */
 #define WSIZE       4       /* Word and header/footer size (bytes) */ 
 #define DSIZE       8       /* Double word size (bytes) */
-#define CHUNKSIZE  (1<<11)  /* Extend heap by this amount (bytes) */  
+#define CHUNKSIZE  (1<<10)  /* Extend heap by this amount (bytes) */  
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))  
 
@@ -79,17 +79,29 @@ static int free_head5 = 0;		//32	64
 static int free_head6 = 0;		//64	128
 static int free_head7 = 0;		//128	256
 static int free_head8 = 0;		//256
+static int free_head9 = 0;
+static int free_head10 = 0;
+static int free_head11 = 0;
+static int free_head12 = 0;
+static int free_head13 = 0;
+static int free_head14 = 0;
 static int* getfree_head(size_t size) {
     if (size < 2 * DSIZE)
         return NULL;
     if (size <= 32) return &free_head1;
     if (size <= 64) return &free_head2;
-    if (size <= 128) return &free_head3;
-    if (size <= 256) return &free_head4;
-    if (size <= 512) return &free_head5;
-    if (size <= 1024) return &free_head6;
-    if (size <= 2048) return &free_head7;
-    return &free_head8;
+	if (size <= 96) return &free_head3;
+    if (size <= 128) return &free_head4;
+	if (size <= 192) return &free_head5;
+    if (size <= 256) return &free_head6;
+	if (size <= 384) return &free_head7;
+    if (size <= 512) return &free_head8;
+	if (size <= 768) return &free_head9;
+    if (size <= 1024) return &free_head10;
+	if (size <= 1536) return &free_head11;
+    if (size <= 2048) return &free_head12;
+	if (size <= 4096) return &free_head13;
+    return &free_head14;
 }
 static void add_block(void* bp);
 
@@ -106,18 +118,23 @@ void mm_checkheap(int lineno);
  */
 int mm_init(void)
 {
-	//printf("call init\n");
     /* Create the initial empty heap */
     if ((heap_listp = mem_sbrk(CHUNKSIZE)) == (void*)-1)
         return -1;
-    free_head7 = 3 * WSIZE;
+    free_head10 = 3 * WSIZE;
 	free_head1 = 0;
 	free_head2 = 0;
 	free_head3 = 0;
 	free_head4 = 0;
 	free_head5 = 0;
 	free_head6 = 0;
+	free_head7 = 0;
 	free_head8 = 0;
+	free_head9 = 0;
+	free_head11 = 0;
+	free_head12 = 0;
+	free_head13 = 0;
+	free_head14 = 0;
     PUT(heap_listp, PACK(3 * WSIZE, 1));
     PUT(heap_listp + (1 * WSIZE), 0);
     PUT(heap_listp + (2 * WSIZE), PACK(3 * WSIZE, 1));
@@ -143,7 +160,6 @@ void* malloc(size_t size)
     size_t extendsize; /* Amount to extend heap if no fit */
     char* bp;
     if (heap_listp == 0) {
-		//printf("call init in malloc\n");
         if (mm_init() == -1) {
             printf("init false\n");
             exit(0);
@@ -202,18 +218,13 @@ void free(void* bp)
         return;
 
     size_t size = GET_SIZE(HDRP(bp));
-#ifdef DEBUG
-    printf("free with bp is %ld, size is %lu\n", (char*)(bp)-heap_listp, size);
-#endif
     if (heap_listp == 0) {
-		//printf("call init in free\n");
         mm_init();
     }
 	if(!GET_ALLOC(HDRP(bp)))
 		return;
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
-    //add_block(bp);
     coalesce(bp);
 }
 
@@ -259,26 +270,6 @@ void* realloc(void* ptr, size_t size)
  *                can call this function using mm_checkheap(__LINE__);
  *                to identify the line number of the call site.
  */
-int Mm_checkheap(int free_head, char* tar)
-{
-	printf("tar is %ld\n", (char*)tar - heap_listp);
-	void *bp;
-
-    for (bp = heap_listp + free_head; GET_SIZE(HDRP(bp)) > 0; bp = SNRP(bp)) {
-		//printf("bp is %ld, size = %u, next = %d, prev = %d\n", (char*)bp - heap_listp, GET_SIZE(HDRP(bp)), *(int*)bp, *(int*)((char*)bp + WSIZE));
-		if(bp == tar){
-			printf("found\n");
-			return 1;
-			//break;
-		}
-		if(*(int*)bp == 0)
-			break;
-        
-    }
-	printf("Not found\n");
-	exit(0);
-	return 0;
-}
 void mm_checkheap(int lineno){
 	lineno = lineno;
 }
@@ -303,7 +294,6 @@ static void* extend_heap(size_t words)
     PUT(HDRP(bp), PACK(size, 0));         /* Free block header */
     PUT(FTRP(bp), PACK(size, 0));         /* Free block footer */
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */
-    //add_block(bp);
     /* Coalesce if the previous block was free */
     return coalesce(bp);
 }
@@ -315,12 +305,6 @@ static void delete_block(void* bp) {
     int* free_head = getfree_head(GET_SIZE(HDRP(bp)));
     char* next = SNRP(bp);
     char* prev = FARP(bp);
-#ifdef DEBUG
-	printf("delete_block: bp is %ld, size is %u, next is %ld, prev is %ld\n", (char*)bp - heap_listp, GET_SIZE(HDRP(bp)), (char*)next - heap_listp, (char*)prev - heap_listp);
-	//printf("bp = 12, size is %u\n", GET_SIZE(HDRP(heap_listp + 12)));
-#endif
-	//if(!Mm_checkheap(*free_head, bp))
-		//return;
     if (next == prev) {
         *free_head = 0;
         return;
@@ -337,10 +321,6 @@ static void delete_block(void* bp) {
         *(int*)(next + WSIZE) = prev - next;}
 }
 static void add_block(void* bp) {
-#ifdef DEBUG
-	printf("add_block: bp is %ld, size is %u\n", (char*)bp - heap_listp, GET_SIZE(HDRP(bp)));
-	printf("add_block: bp = 12, size is %u\n", GET_SIZE(HDRP(heap_listp + 12)));
-#endif
     int* free_head = getfree_head(GET_SIZE(HDRP(bp)));
     if (*free_head != 0) {
         char* next = (char*)(heap_listp) + *free_head;
@@ -352,15 +332,9 @@ static void add_block(void* bp) {
     }
     *free_head = (char*)(bp)-heap_listp;
     *(int*)((char*)(bp)+WSIZE) = 0;
-	//printf("added_block: bp is 12, size is %u\n", GET_SIZE(HDRP(heap_listp + 12)));
 }
 static void* coalesce(void* bp)
 {
-#ifdef DEBUG
-    printf("coalesce: bp is %ld\n", (char*)(bp)-heap_listp);
-	printf("bp = 12, size is %u\n", GET_SIZE(HDRP(heap_listp + 12)));
-    printf("left size is %u, right size is %u\n", GET_SIZE(((char*)(bp)-DSIZE)), GET_SIZE(HDRP(NEXT_BLKP(bp))));
-#endif
     char* prev_bp = PREV_BLKP(bp);
 	char* next_bp = NEXT_BLKP(bp);
     size_t prev_alloc;
@@ -373,15 +347,7 @@ static void* coalesce(void* bp)
 		next_alloc = 1;}
 	else{
 		next_alloc = GET_ALLOC(HDRP(next_bp));}
-#ifdef DEBUG
-    printf("PREV_BLKP = %ld, NEXT_BLKP = %ld\n", prev_bp - heap_listp, next_bp - heap_listp);
-#endif
-    //prev_alloc = GET_ALLOC((char*)bp - DSIZE);
-    //size_t next_alloc = GET_ALLOC(HDRP(next_bp));
     size_t size = GET_SIZE(HDRP(bp));
-#ifdef DEBUG
-    printf("prev_alloc is %lu, next_alloc is %lu\n", prev_alloc, next_alloc);
-#endif
     if (prev_alloc && next_alloc) {            /* Case 1 */
 		add_block(bp);
         return bp;
@@ -390,7 +356,6 @@ static void* coalesce(void* bp)
     else if (prev_alloc && !next_alloc) {      /* Case 2 */
         char* rp = NEXT_BLKP(bp);
         size += GET_SIZE(HDRP(rp));
-        //delete_block(bp);
         delete_block(rp);
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
@@ -401,7 +366,6 @@ static void* coalesce(void* bp)
         char* lp = PREV_BLKP(bp);
         size += GET_SIZE(HDRP(lp));
         delete_block(lp);
-        //delete_block(bp);
         PUT(HDRP(lp), PACK(size, 0));
         PUT(FTRP(lp), PACK(size, 0));
         add_block(lp);
@@ -413,7 +377,6 @@ static void* coalesce(void* bp)
         char* lp = PREV_BLKP(bp);
         size += (GET_SIZE(HDRP(lp)) + GET_SIZE(FTRP(rp)));
         delete_block(lp);
-        //delete_block(bp);
         delete_block(rp);
         PUT(HDRP(lp), PACK(size, 0));
         PUT(FTRP(lp), PACK(size, 0));
@@ -429,10 +392,6 @@ static void* coalesce(void* bp)
  */
 static void place(void* bp, size_t asize)
 {
-#ifdef DEBUG
-	printf("place bp is %ld, with asize = %lu\n", (char*)bp - heap_listp, asize);
-	printf("bp = 12, size is %u\n", GET_SIZE(HDRP(heap_listp + 12)));
-#endif
     size_t csize = GET_SIZE(HDRP(bp));
     delete_block(bp);
     if ((csize - asize) >= (2 * DSIZE)) {
@@ -441,7 +400,6 @@ static void place(void* bp, size_t asize)
         char* rp = NEXT_BLKP(bp);
         PUT(HDRP(rp), PACK(csize - asize, 0));
         PUT(FTRP(rp), PACK(csize - asize, 0));
-        //add_block(rp);
 		coalesce(rp);
     }
     else {
@@ -476,7 +434,7 @@ static void* find_fit(size_t asize)
                 break;
         }
     }
-    if (asize <= 128 && free_head3 != 0) {
+    if (asize <= 96 && free_head3 != 0) {
         for (bp = heap_listp + free_head3; ; bp = SNRP(bp)) {
             if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
                 return bp;
@@ -485,7 +443,7 @@ static void* find_fit(size_t asize)
                 break;
         }
     }
-    if (asize <= 256 && free_head4 != 0) {
+    if (asize <= 128 && free_head4 != 0) {
         for (bp = heap_listp + free_head4; ; bp = SNRP(bp)) {
             if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
                 return bp;
@@ -494,7 +452,7 @@ static void* find_fit(size_t asize)
                 break;
         }
     }
-    if (asize <= 512 && free_head5 != 0) {
+    if (asize <= 192 && free_head5 != 0) {
         for (bp = heap_listp + free_head5; ; bp = SNRP(bp)) {
             if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
                 return bp;
@@ -503,7 +461,7 @@ static void* find_fit(size_t asize)
                 break;
         }
     }
-    if (asize <= 1024 && free_head6 != 0) {
+    if (asize <= 256 && free_head6 != 0) {
         for (bp = heap_listp + free_head6; ; bp = SNRP(bp)) {
             if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
                 return bp;
@@ -512,7 +470,7 @@ static void* find_fit(size_t asize)
                 break;
         }
     }
-    if (asize <= 2048 && free_head7 != 0) {
+    if (asize <= 384 && free_head7 != 0) {
         for (bp = heap_listp + free_head7; ; bp = SNRP(bp)) {
             if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
                 return bp;
@@ -521,8 +479,62 @@ static void* find_fit(size_t asize)
                 break;
         }
     }
-    if (free_head8 != 0) {
+    if (asize <= 512 && free_head8 != 0) {
         for (bp = heap_listp + free_head8; ; bp = SNRP(bp)) {
+            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+                return bp;
+            }
+            if ((*(int*)(bp) == 0))
+                break;
+        }
+    }
+    if (asize <= 768 && free_head9 != 0) {
+        for (bp = heap_listp + free_head9; ; bp = SNRP(bp)) {
+            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+                return bp;
+            }
+            if ((*(int*)(bp) == 0))
+                break;
+        }
+    }
+    if (asize <= 1024 && free_head10 != 0) {
+        for (bp = heap_listp + free_head10; ; bp = SNRP(bp)) {
+            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+                return bp;
+            }
+            if ((*(int*)(bp) == 0))
+                break;
+        }
+    }
+    if (asize <= 1536 && free_head11 != 0) {
+        for (bp = heap_listp + free_head11; ; bp = SNRP(bp)) {
+            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+                return bp;
+            }
+            if ((*(int*)(bp) == 0))
+                break;
+        }
+    }
+    if (asize <= 2048 && free_head12 != 0) {
+        for (bp = heap_listp + free_head12; ; bp = SNRP(bp)) {
+            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+                return bp;
+            }
+            if ((*(int*)(bp) == 0))
+                break;
+        }
+    }
+    if (asize <= 4096 && free_head13 != 0) {
+        for (bp = heap_listp + free_head13; ; bp = SNRP(bp)) {
+            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+                return bp;
+            }
+            if ((*(int*)(bp) == 0))
+                break;
+        }
+    }
+    if (free_head14 != 0) {
+        for (bp = heap_listp + free_head14; ; bp = SNRP(bp)) {
             if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
                 return bp;
             }
