@@ -88,7 +88,7 @@ static int free_head14 = 0;
 static int* getfree_head(size_t size) {
     if (size < 2 * DSIZE)
         return NULL;
-    if (size <= 32) return &free_head1;
+    if (size <= 28) return &free_head1;
     if (size <= 64) return &free_head2;
 	if (size <= 96) return &free_head3;
     if (size <= 128) return &free_head4;
@@ -113,6 +113,7 @@ static void* coalesce(void* bp);
 static int in_heap(const void* p);
 static int aligned(const void* p);
 void mm_checkheap(int lineno);
+static int heap_top = 0;
 /*
  * mm_init - Initialize the memory manager
  */
@@ -131,9 +132,9 @@ int mm_init(void)
 	free_head7 = 0;
 	free_head8 = 0;
 	free_head9 = 0;
-	free_head11 = 0;
 	free_head12 = 0;
 	free_head13 = 0;
+	free_head11 = 0;
 	free_head14 = 0;
     PUT(heap_listp, PACK(3 * WSIZE, 1));
     PUT(heap_listp + (1 * WSIZE), 0);
@@ -144,7 +145,7 @@ int mm_init(void)
     PUT(heap_listp + (CHUNKSIZE - 2 * WSIZE), PACK(CHUNKSIZE - 4 * WSIZE, 0)); /* Prologue footer */
     PUT(heap_listp + (CHUNKSIZE - 1 * WSIZE), PACK(0, 1));
     heap_listp += WSIZE;
-
+    heap_top = CHUNKSIZE - 1 * WSIZE;
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     //if (extend_heap(CHUNKSIZE/WSIZE) == NULL) 
         //return -1;
@@ -197,17 +198,18 @@ void* calloc(size_t nmemb, size_t size) {
  * Return whether the pointer is in the heap.
  * May be useful for debugging.
  */
- //static int in_heap(const void *p) {
-     //return p <= mem_heap_hi() && p >= mem_heap_lo();
- //}
+ static int in_heap(const void *p) {
+     int  s = (char*)p - heap_listp;
+     return s < heap_top && s >= 2 * WSIZE;
+ }
 
  /*
   * Return whether the pointer is aligned.
   * May be useful for debugging.
   */
-  //static int aligned(const void *p) {
-      //return (size_t)ALIGN(p) == (size_t)p;
-  //}
+  static int aligned(const void *p) {
+      return (size_t)ALIGN(p) == (size_t)p;
+  }
 
   /*
    * free - Free a block
@@ -270,8 +272,58 @@ void* realloc(void* ptr, size_t size)
  *                can call this function using mm_checkheap(__LINE__);
  *                to identify the line number of the call site.
  */
+int * gethead(int i){
+    if(i == 1)
+        return &free_head1;
+    if(i == 2)
+        return &free_head2;
+    if(i == 3)
+        return &free_head3;
+    if(i == 4)
+        return &free_head4;
+    if(i == 5)
+        return &free_head5;
+    if(i == 6)
+        return &free_head6;
+    if(i == 7)
+        return &free_head7;
+    if(i == 8)
+        return &free_head8;
+    if(i == 9)
+        return &free_head9;
+    if(i == 10)
+        return &free_head10;
+    if(i == 11)
+        return &free_head11;
+    if(i == 12)
+        return &free_head12;
+    if(i == 13)
+        return &free_head13;
+    if(i == 14)
+        return &free_head14;
+    return NULL;
+}
 void mm_checkheap(int lineno){
-	lineno = lineno;
+    printf("call mm_checkheap in line: %d\n", lineno);
+    char* bp;
+    for(int i = 1; i <= 14; i++){
+        int free_head = *gethead(i);
+        if(free_head != 0){
+	        for (bp = heap_listp + free_head1; ; bp = SNRP(bp)) {
+                if(!in_heap(bp)){
+                    printf("pointer %ld not in heap\n", bp - heap_listp);
+                    break;
+                }
+                if (!aligned(bp)) {
+                    printf("pointer %ld not aligned\n", bp - heap_listp);
+                    break;
+                }
+                printf("free_head%d: bp is %ld, size is %u\n", i, bp - heap_listp, GET_SIZE(HDRP(bp)));
+                if ((*(int*)(bp) == 0))
+                    break;
+            }
+        }
+    }
 }
 
 /*
@@ -288,8 +340,9 @@ static void* extend_heap(size_t words)
 
     /* Allocate an even number of words to maintain alignment */
     size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;
-    if ((long)(bp = mem_sbrk(size)) == -1)
-        return NULL;
+    if ((long)(bp = mem_sbrk(size)) == -1){
+        return NULL;}
+    heap_top += size;
     /* Initialize free block header/footer and the epilogue header */
     PUT(HDRP(bp), PACK(size, 0));         /* Free block header */
     PUT(FTRP(bp), PACK(size, 0));         /* Free block footer */
@@ -322,6 +375,41 @@ static void delete_block(void* bp) {
 }
 static void add_block(void* bp) {
     int* free_head = getfree_head(GET_SIZE(HDRP(bp)));
+    /*if(*free_head == 0){
+        *(int*)bp = 0;
+        *free_head = (char*)(bp) - heap_listp;
+        *(int*)((char*)(bp)+WSIZE) = 0;
+    }
+    else{
+        char* cur;
+        char* next;
+        size_t bp_size = GET_SIZE(HDRP(bp));
+        cur = heap_listp + *free_head;
+        if(bp_size < GET_SIZE(HDRP(cur))){
+            *(int*)((char*)(cur) + WSIZE) = (char*)(bp)-cur;
+            *(int*)(bp) = cur - (char*)bp;
+            *free_head = (char*)(bp)-heap_listp;
+            *(int*)((char*)(bp)+WSIZE) = 0;
+            return;
+        }
+        for (; ; cur = next) {
+            next = SNRP(cur);
+            if(next == cur){
+                *(int*)(cur) = (char*)(bp) - cur;
+                *(int*)((char*)(bp) + WSIZE) = cur - (char*)bp;
+                *(int*)bp = 0;
+                return;
+            }
+            if (bp_size < GET_SIZE(HDRP(next))) {
+                *(int*)(cur) = (char*)(bp) - cur;
+                *(int*)((char*)(bp) + WSIZE) = cur - (char*)bp;
+                *(int*)bp = next - (char*)bp;
+                *(int*)(next + WSIZE) = (char*)(bp) - next;
+                return;
+            }
+        }
+    }*/
+    
     if (*free_head != 0) {
         char* next = (char*)(heap_listp) + *free_head;
         *(int*)((char*)(next) + WSIZE) = (char*)(bp)-next;
@@ -416,9 +504,9 @@ static void* find_fit(size_t asize)
     if (asize < 2 * DSIZE)
         return NULL;
     char* bp;
-    if (asize <= 32 && free_head1 != 0) {
+    if (asize <= 28 && free_head1 != 0) {
         for (bp = heap_listp + free_head1; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -427,7 +515,7 @@ static void* find_fit(size_t asize)
     }
     if (asize <= 64 && free_head2 != 0) {
         for (bp = heap_listp + free_head2; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -436,7 +524,7 @@ static void* find_fit(size_t asize)
     }
     if (asize <= 96 && free_head3 != 0) {
         for (bp = heap_listp + free_head3; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -445,7 +533,7 @@ static void* find_fit(size_t asize)
     }
     if (asize <= 128 && free_head4 != 0) {
         for (bp = heap_listp + free_head4; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -454,7 +542,7 @@ static void* find_fit(size_t asize)
     }
     if (asize <= 192 && free_head5 != 0) {
         for (bp = heap_listp + free_head5; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -463,7 +551,7 @@ static void* find_fit(size_t asize)
     }
     if (asize <= 256 && free_head6 != 0) {
         for (bp = heap_listp + free_head6; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -472,7 +560,7 @@ static void* find_fit(size_t asize)
     }
     if (asize <= 384 && free_head7 != 0) {
         for (bp = heap_listp + free_head7; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -481,7 +569,7 @@ static void* find_fit(size_t asize)
     }
     if (asize <= 512 && free_head8 != 0) {
         for (bp = heap_listp + free_head8; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -490,7 +578,7 @@ static void* find_fit(size_t asize)
     }
     if (asize <= 768 && free_head9 != 0) {
         for (bp = heap_listp + free_head9; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -499,7 +587,7 @@ static void* find_fit(size_t asize)
     }
     if (asize <= 1024 && free_head10 != 0) {
         for (bp = heap_listp + free_head10; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -508,7 +596,7 @@ static void* find_fit(size_t asize)
     }
     if (asize <= 1536 && free_head11 != 0) {
         for (bp = heap_listp + free_head11; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -517,7 +605,7 @@ static void* find_fit(size_t asize)
     }
     if (asize <= 2048 && free_head12 != 0) {
         for (bp = heap_listp + free_head12; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -526,7 +614,7 @@ static void* find_fit(size_t asize)
     }
     if (asize <= 4096 && free_head13 != 0) {
         for (bp = heap_listp + free_head13; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
@@ -535,7 +623,7 @@ static void* find_fit(size_t asize)
     }
     if (free_head14 != 0) {
         for (bp = heap_listp + free_head14; ; bp = SNRP(bp)) {
-            if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (asize <= GET_SIZE(HDRP(bp))) {
                 return bp;
             }
             if ((*(int*)(bp) == 0))
